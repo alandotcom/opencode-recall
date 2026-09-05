@@ -99,8 +99,10 @@ export default Plugin.define({
             maxChars,
           })
 
+          // Never return an `output` key. opencode calls Effect.die on a
+          // result carrying `output` when the tool declares no output schema,
+          // which fails every call rather than returning an error.
           return {
-            output: { matches: hits.length },
             content: render(hits, maxChars),
             // Our own cap already bounds this, so skip opencode's line/byte
             // truncation pass rather than have two limits disagree.

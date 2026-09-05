@@ -23,6 +23,9 @@ $0.05 turn into a $0.60 turn.
   import.
 - Keep the result bounded. `maxChars` caps the whole response, and the tool sets
   `metadata.truncated` so that opencode does not truncate it a second time.
+- Return no `output` key from the tool unless the tool also declares an `output` schema. opencode
+  calls `Effect.die` on that combination (`packages/core/src/tool/runtime.ts:45-46`), so every call
+  fails instead of returning an error. Put structured values in `metadata`.
 - Target the v2 API only. A v2 plugin default-exports `Plugin.define({ id, setup })` and registers
   tools with `ctx.tool.transform`. The v1 hook object does not exist in this generation.
 
