@@ -16,6 +16,34 @@ group.
 `recall` never searches another thread. If nothing matches, it reports that nothing matched. An
 answer taken from unrelated work is worse than no answer.
 
+## If you want to search every thread
+
+This plugin searches one thread on purpose. Other projects index every session you have, and they
+are better at that job:
+
+| Project | Reads |
+| --- | --- |
+| `singleflo/opencode-history-mcp` | opencode's database, through a separate full-text index |
+| `nerdyaustin/memory_mcp` | opencode, Claude Code, Codex, and Gemini, plus a note store |
+| `callimachus` | Eleven agents, with keyword and on-device semantic ranking |
+| `code-session-memory` | opencode and five other tools, into one vector database |
+
+Install one of those if you want to find work from another thread. Do not expect `recall` to grow
+that ability. A match from unrelated work reads as authoritative and is usually wrong, which is the
+reason this plugin stays narrow.
+
+## Security
+
+`recall` returns text that people wrote in earlier turns. Treat it as information, not as
+instructions. If a hostile instruction was ever pasted into this thread, the model can read it again
+later and try to follow it. The same is true of a secret: `recall` will show it again.
+
+Reading one thread is a smaller risk than reading every session on disk, which is what a global
+search tool gives a model. The risk is not zero. Do not give an agent that works on untrusted input
+a tool that reads conversation history.
+
+`recall` opens the database read-only and never writes to it.
+
 ## Install
 
 Paste this into opencode:
