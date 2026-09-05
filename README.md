@@ -1,20 +1,20 @@
 # opencode-recall
 
-An opencode v2 plugin. It adds one tool, `recall`, that searches earlier messages in the
-**current thread**, including the messages that dropped out of context when the session compacted.
+An opencode v2 plugin. It adds one tool, `recall`, that searches earlier messages in the current
+thread.
 
-opencode's compaction replaces older context with a summary capped at 4,096 output tokens. The
-messages themselves are never deleted, they just stop being loaded. `recall` reads them back out of
-opencode's own database.
+opencode compacts a long session. Compaction replaces older messages with a summary of 4,096 tokens
+at most. The messages stay in the opencode database. They only stop reaching the model. `recall`
+reads them back.
 
-## The scope rule
+## Scope
 
-A thread is a session tree: a root session plus every subagent session it spawned, linked by
-`parent_id`. `recall` resolves that tree from whichever session calls it and searches only there.
+A thread is one session plus every subagent session that it started. opencode links them with
+`parent_id`. `recall` resolves that group from the session that called it, and searches only that
+group.
 
-It never widens. A query that matches nothing returns "no matches in this thread" rather than falling
-back to other threads or to every session on disk. A confident answer pulled from unrelated work is
-worse than no answer.
+`recall` never searches another thread. If nothing matches, it reports that nothing matched. An
+answer taken from unrelated work is worse than no answer.
 
 ## Install
 
@@ -24,19 +24,18 @@ Paste this into opencode:
 Install the opencode-recall plugin.
 
 1. Add "github:alandotcom/opencode-recall" to the "plugins" array in
-   ~/.config/opencode/opencode.json, or the absolute path to the repo directory if I have it cloned.
-   Create the "plugins" array if it does not exist. Do not disturb any other key in that file.
-2. Ask me which model the recall agent should use, and wait for my answer. Show me the models I
-   already use in that config so I can pick one. A cheap, fast model is the right choice: this agent
-   reads a lot of history and writes a short summary.
-3. Write ~/.config/opencode/agents/recall.md using the model I chose, with the frontmatter and body
-   from the "Agent" section of the opencode-recall README.
-4. Append the rule from the "Make it get used" section of that README to my global AGENTS.md.
+   ~/.config/opencode/opencode.json, or the absolute path to the repository directory if I have it
+   cloned. Create the "plugins" array if it does not exist. Do not change any other key.
+2. Ask me which model the recall agent must use, then wait for my answer. List the models that the
+   configuration already uses so that I can pick one. A cheap and fast model is the right choice,
+   because this agent reads a lot of history and writes a short summary.
+3. Write ~/.config/opencode/agents/recall.md with the model that I chose. Use the frontmatter and
+   the body from the "Agent" section of the opencode-recall README.
+4. Add the rule from the "Make the agent use it" section of that README to my global AGENTS.md.
 5. Tell me to restart opencode, then show me what you changed.
 ```
 
-Or do it by hand. Add one entry to `plugins` in `~/.config/opencode/opencode.json`, using whichever
-form suits you:
+To install by hand, add one entry to `plugins` in `~/.config/opencode/opencode.json`:
 
 ```jsonc
 {
@@ -44,17 +43,18 @@ form suits you:
 }
 ```
 
-opencode passes a non-absolute entry to `npm-package-arg`, so a `github:owner/repo` spec installs
-straight from git. Pin a commit with `#<sha>` to stop it tracking the branch. An absolute path works
-too and must point at the **directory**, not at a file. Relative paths resolve against the config
-file's own directory.
+opencode reads a non-absolute entry with `npm-package-arg`, so a `github:owner/repo` entry installs
+from git. Add `#<sha>` to pin a commit. An absolute entry must name the directory, not a file. A
+relative entry resolves against the directory of the configuration file.
 
-You can also skip the config entirely: opencode scans `~/.config/opencode/plugin/` and
-`~/.config/opencode/plugins/` and loads what it finds, including symlinks.
+You can also skip the configuration file. opencode loads what it finds in
+`~/.config/opencode/plugin/` and `~/.config/opencode/plugins/`, symbolic links included:
 
 ```sh
 ln -s ~/projects/opencode-recall ~/.config/opencode/plugins/opencode-recall
 ```
+
+## Options
 
 Options go in the object form of the entry:
 
@@ -66,20 +66,20 @@ Options go in the object form of the entry:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `limit` | `10` | Maximum matches returned per call. |
-| `snippetChars` | `400` | Characters of context shown around each match. |
-| `maxChars` | `6000` | Hard cap on the whole tool result. |
-| `database` | resolved | Path to `opencode.db`. Resolved from `OPENCODE_DB`, else the data directory. |
+| `limit` | `10` | Largest number of matches for one call. |
+| `snippetChars` | `400` | Characters of context around each match. |
+| `maxChars` | `6000` | Largest size of the whole tool result. |
+| `database` | resolved | Path to `opencode.db`. Read from `OPENCODE_DB`, else the data directory. |
 
 ## Agent
 
-`recall` is a plain tool, so any agent can call it. Running it in a cheap subagent keeps the reading
-off your main model's context. Save this as `~/.config/opencode/agents/recall.md` and set the model
-to whichever cheap, fast model you use.
+`recall` is an ordinary tool, so any agent can call it. A cheap subagent keeps the reading off the
+context of your main model. Save this file as `~/.config/opencode/agents/recall.md` and set the
+model to a cheap and fast one:
 
 ```md
 ---
-description: Searches earlier messages in the current thread, including anything lost to compaction. Use before re-reading files or re-deriving a decision the thread may already have settled.
+description: Searches earlier messages in the current thread, including messages lost to compaction. Use it before you re-read files or decide something the thread already decided.
 mode: subagent
 model: <your-provider>/<your-cheap-model>
 permissions:
@@ -91,39 +91,40 @@ permissions:
     effect: deny
 ---
 
-You search this thread's own history and report what it already established.
+You search the history of this thread and report what it already established.
 
-Call the `recall` tool with a distinctive word or identifier. Matching is literal substring, so
-prefer `flexbox` or `useViewport` over a whole sentence. Try two or three phrasings before concluding
-nothing is there.
+Call the `recall` tool with one distinctive word or identifier. The tool matches literal text, so
+`flexbox` and `useViewport` work better than a sentence. Try two or three wordings before you decide
+that the thread holds nothing.
 
-Answer in a few sentences. Quote the line that settles the question and cite its session and sequence
-number so the caller can read more. If nothing matches, say so plainly. Never guess at what the
-thread probably decided, and never read project files: your job is the conversation, not the code.
+Answer in a few sentences. Quote the line that settles the question. Give its session and sequence
+number so that the caller can read more. If nothing matches, say so. Never guess what the thread
+decided, and never read project files. Your subject is the conversation, not the code.
 ```
 
-## Make it get used
+## Make the agent use it
 
-Agents do not reach for history on their own. Add this to your global `AGENTS.md`:
+An agent does not search its own history unless you tell it to. Add this to your global
+`AGENTS.md`:
 
 ```md
-## Check this thread's history first
+## Search this thread first
 
-Before re-reading files or re-deriving a decision on a task this thread has already touched, and
-always on your first turn after a compaction, delegate to the `recall` agent. Ask it what this thread
-already established about the thing you are about to work on. Only explore the codebase directly if
-recall comes back empty.
+Delegate to the `recall` agent before you re-read files, and before you decide anything that this
+thread already decided. Always do this on your first turn after a compaction. Ask what the thread
+already established about the work in front of you. Explore the code directly only if `recall`
+returns nothing.
 ```
 
-## Why it does not inject anything
+## No prompt injection
 
-Everything `recall` returns arrives as an ordinary tool result, at the end of the prompt. Nothing is
-written into the system prompt or into earlier turns.
+`recall` returns its results as a tool result, at the end of the prompt. It never writes into the
+system prompt or into earlier messages.
 
-That is deliberate. Retrieved text placed above the current turn changes the cached prompt prefix,
-which forces the provider to write the whole prefix to cache again. On a 96k-token context billed at
-$6.25 per million cache-write tokens against $0.50 per million cached-read tokens, that is $0.60 a
-turn instead of $0.05. Several memory plugins inject on every turn. This one cannot, by design.
+Text placed above the current turn changes the cached prefix, and the provider must then write the
+whole prefix to cache again. For a context of 96,000 tokens, that rewrite costs $0.60 each turn at
+$6.25 per million cache-write tokens. Reading the same prefix from cache costs $0.05 at $0.50 per
+million tokens. Some memory plugins inject text on every turn. This one cannot.
 
 ## Development
 
@@ -134,12 +135,12 @@ bun run typecheck
 ```
 
 The plugin opens `opencode.db` read-only and never writes to it. `bun:sqlite` ships inside opencode,
-so there are no runtime dependencies beyond the plugin API itself.
+so the only dependency is the plugin API.
 
-This is a **v2 plugin** and will not load in opencode v1. The two plugin APIs are disjoint: v1 returns
-a hooks object from an exported factory, v2 default-exports `Plugin.define({ id, setup })` and
-registers everything imperatively. If your config uses the `plugin` key rather than `plugins`, you are
-on v1 and this will not load.
+This is a v2 plugin. It cannot load in opencode v1. The two plugin APIs share no surface. A v1 plugin
+exports a factory that returns a hooks object. A v2 plugin default-exports `Plugin.define({ id,
+setup })` and registers everything inside `setup`. If your configuration uses the `plugin` key
+instead of `plugins`, you run v1, and this plugin will not load.
 
 ## License
 
