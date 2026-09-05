@@ -23,9 +23,9 @@ Paste this into opencode:
 ```
 Install the opencode-recall plugin.
 
-1. Add it to the "plugins" array in ~/.config/opencode/opencode.json. Use the local path if the repo
-   is cloned (for example "/Users/me/projects/opencode-recall"), otherwise the package name.
-   Create the "plugins" array if it does not exist. Do not disturb the other keys.
+1. Add "github:alandotcom/opencode-recall" to the "plugins" array in
+   ~/.config/opencode/opencode.json, or the absolute path to the repo directory if I have it cloned.
+   Create the "plugins" array if it does not exist. Do not disturb any other key in that file.
 2. Ask me which model the recall agent should use, and wait for my answer. Show me the models I
    already use in that config so I can pick one. A cheap, fast model is the right choice: this agent
    reads a lot of history and writes a short summary.
@@ -35,19 +35,32 @@ Install the opencode-recall plugin.
 5. Tell me to restart opencode, then show me what you changed.
 ```
 
-Or do it by hand: add the plugin to `plugins`, then copy the agent file below.
+Or do it by hand. Add one entry to `plugins` in `~/.config/opencode/opencode.json`, using whichever
+form suits you:
 
 ```jsonc
 {
-  "plugins": ["opencode-recall"]
+  "plugins": ["github:alandotcom/opencode-recall"]
 }
 ```
 
-Options are optional, and go in the object form:
+opencode passes a non-absolute entry to `npm-package-arg`, so a `github:owner/repo` spec installs
+straight from git. Pin a commit with `#<sha>` to stop it tracking the branch. An absolute path works
+too and must point at the **directory**, not at a file. Relative paths resolve against the config
+file's own directory.
+
+You can also skip the config entirely: opencode scans `~/.config/opencode/plugin/` and
+`~/.config/opencode/plugins/` and loads what it finds, including symlinks.
+
+```sh
+ln -s ~/projects/opencode-recall ~/.config/opencode/plugins/opencode-recall
+```
+
+Options go in the object form of the entry:
 
 ```jsonc
 {
-  "plugins": [{ "package": "opencode-recall", "options": { "limit": 10, "maxChars": 6000 } }]
+  "plugins": [{ "package": "github:alandotcom/opencode-recall", "options": { "limit": 10 } }]
 }
 ```
 
@@ -121,7 +134,12 @@ bun run typecheck
 ```
 
 The plugin opens `opencode.db` read-only and never writes to it. `bun:sqlite` ships inside opencode,
-so there are no runtime dependencies.
+so there are no runtime dependencies beyond the plugin API itself.
+
+This is a **v2 plugin** and will not load in opencode v1. The two plugin APIs are disjoint: v1 returns
+a hooks object from an exported factory, v2 default-exports `Plugin.define({ id, setup })` and
+registers everything imperatively. If your config uses the `plugin` key rather than `plugins`, you are
+on v1 and this will not load.
 
 ## License
 
