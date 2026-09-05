@@ -1,0 +1,29 @@
+{
+  "name": "opencode-recall",
+  "version": "0.1.0",
+  "description": "Search earlier messages in the current opencode thread, including messages lost to compaction.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin"
+  ],
+  "dependencies": {
+    "@opencode-ai/plugin": "beta"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.8.2"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}
