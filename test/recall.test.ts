@@ -82,13 +82,29 @@ test("checkpoint lookup reports the newest compaction, or nothing", () => {
 test("an empty result says so without implying the topic is unknown", () => {
   const hits = search(db, { ...options, sessionID: "child-a", query: "kubernetes" })
   expect(hits).toEqual([])
-  expect(render(hits, 4000)).toContain("No matches in this thread")
+  expect(render(hits, 4000).content).toContain("No matches in this thread")
 })
 
-test("rendering respects the character cap", () => {
+test("the complete rendered response respects the exact character cap", () => {
   const hits = search(db, { ...options, sessionID: "root", query: "a" })
-  const out = render(hits, 300)
-  expect(out.length).toBeLessThanOrEqual(400)
+  const rendered = render(hits, 300)
+  expect(rendered.content.length).toBeLessThanOrEqual(300)
+})
+
+test("render counts only hit blocks as shown", () => {
+  const hits = search(db, { ...options, sessionID: "root", query: "alignment" })
+  const rendered = render(hits, 180)
+  const visibleHits = hits.filter((hit) => rendered.content.includes(`${hit.sessionID}#${hit.seq}`))
+  expect(rendered.content).toContain("further matches not shown")
+  expect(rendered.shown).toBe(visibleHits.length)
+  expect(rendered.omitted).toBe(hits.length - visibleHits.length)
+})
+
+test("the no-match response also respects the character cap", () => {
+  const rendered = render([], 30)
+  expect(rendered.content.length).toBe(30)
+  expect(rendered.shown).toBe(0)
+  expect(rendered.omitted).toBe(0)
 })
 
 test("assistant reasoning blobs are not searched or shown", () => {

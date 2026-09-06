@@ -193,23 +193,36 @@ export function search(db: Database, options: SearchOptions): Hit[] {
     }))
 }
 
-/** Renders hits as text for the model, truncated to stay within the cap. */
-export function render(hits: Hit[], maxChars: number): string {
+export type RenderedSearch = {
+  content: string
+  shown: number
+  omitted: number
+}
+
+/** Renders hits for the model, including all framing text within the cap. */
+export function render(hits: Hit[], maxChars: number): RenderedSearch {
+  const cap = Math.max(0, Math.floor(maxChars))
   if (hits.length === 0) {
-    return "No matches in this thread. Recall only searches the current thread, so this does not mean the topic never came up elsewhere."
+    const message =
+      "No matches in this thread. Recall only searches the current thread, so this does not mean the topic never came up elsewhere."
+    return { content: message.slice(0, cap), shown: 0, omitted: 0 }
   }
-  const lines: string[] = []
-  let used = 0
-  let shown = 0
-  for (const hit of hits) {
+
+  const blocks = hits.map((hit) => {
     const when = new Date(hit.createdAt).toISOString().replace("T", " ").slice(0, 16)
-    const block = `[${when}] ${hit.role} ${hit.sessionID}#${hit.seq}\n${hit.snippet}\n`
-    if (used + block.length > maxChars) break
-    lines.push(block)
-    used += block.length
-    shown++
+    return `[${when}] ${hit.role} ${hit.sessionID}#${hit.seq}\n${hit.snippet}`
+  })
+
+  for (let shown = hits.length; shown >= 0; shown--) {
+    const omitted = hits.length - shown
+    const parts = blocks.slice(0, shown)
+    if (omitted > 0) {
+      parts.push(`(${omitted} further match${omitted === 1 ? "" : "es"} not shown; narrow the query)`)
+    }
+    const content = parts.join("\n\n")
+    if (content.length <= cap) return { content, shown, omitted }
   }
-  const omitted = hits.length - shown
-  if (omitted > 0) lines.push(`(${omitted} further match${omitted === 1 ? "" : "es"} not shown; narrow the query)`)
-  return lines.join("\n")
+
+  const notice = `(${hits.length} further match${hits.length === 1 ? "" : "es"} not shown; narrow the query)`
+  return { content: notice.slice(0, cap), shown: 0, omitted: hits.length }
 }
