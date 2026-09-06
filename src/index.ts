@@ -15,8 +15,8 @@ const DESCRIPTION = [
   "context after a compaction. Use it before re-reading files or re-deriving something the thread",
   "may already have settled: a decision, an error and its fix, a test result, a rejected approach.",
   "Only this thread is searched, so an empty result means nothing matched here, not that the topic",
-  "never came up. Matching is literal substring, so prefer a distinctive word or identifier over a",
-  "sentence.",
+  "never came up. Results use BM25 term relevance, so describe the subject with a few distinctive",
+  "words or identifiers. Terms do not need to be adjacent or in the same order.",
 ].join(" ")
 
 const INPUT_SCHEMA = {
@@ -24,7 +24,7 @@ const INPUT_SCHEMA = {
   properties: {
     query: {
       type: "string",
-      description: "Literal text to look for. A distinctive identifier beats a phrase.",
+      description: "Words or identifiers describing what to find. Distinctive terms rank best.",
     },
     limit: {
       type: "number",

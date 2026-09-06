@@ -16,6 +16,9 @@ group.
 `recall` never searches another thread. If nothing matches, it reports that nothing matched. An
 answer taken from unrelated work is worse than no answer.
 
+Search uses BM25 term relevance. Query terms do not need to be next to each other or in the same
+order. A short description with distinctive words or identifiers works best.
+
 ## If you want to search every thread
 
 This plugin searches one thread on purpose. Other projects index every session you have, and they
@@ -121,9 +124,9 @@ permissions:
 
 You search the history of this thread and report what it already established.
 
-Call the `recall` tool with one distinctive word or identifier. The tool matches literal text, so
-`flexbox` and `useViewport` work better than a sentence. Try two or three wordings before you decide
-that the thread holds nothing.
+Call the `recall` tool with a short description of what you need. It ranks results with BM25, so use
+distinctive words or identifiers and omit words that do not describe the subject. Try two or three
+wordings before you decide that the thread holds nothing.
 
 Answer in a few sentences. Quote the line that settles the question. Give its session and sequence
 number so that the caller can read more. If nothing matches, say so. Never guess what the thread

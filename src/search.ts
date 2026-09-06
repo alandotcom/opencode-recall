@@ -20,37 +20,66 @@ export type Hit = {
   snippet: string
 }
 
-const RECENCY_HALF_LIFE_MS = 24 * 60 * 60 * 1000
-
-/**
- * Ranks a hit by recency, nudged up when the query appears more than once.
- *
- * Plain substring matching is noisy: on a real thread, one common word matched
- * roughly a third of all messages. Ranking plus a hard output cap is what makes
- * the result readable, which matters more here than search sophistication.
- */
-function score(hit: Hit, now: number): number {
-  const ageHalfLives = (now - hit.createdAt) / RECENCY_HALF_LIFE_MS
-  const recency = Math.pow(0.5, ageHalfLives)
-  return recency * (1 + Math.log2(hit.occurrences + 1))
+type SearchDocument = {
+  sessionID: string
+  seq: number
+  role: string
+  createdAt: number
+  body: string
+  terms: string[]
+  frequencies: Map<string, number>
 }
 
-function snippetAround(body: string, needle: string, width: number): string {
-  const at = body.toLowerCase().indexOf(needle)
+const BM25_K1 = 1.2
+const BM25_B = 0.75
+
+function tokenize(input: string): string[] {
+  return input.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []
+}
+
+function termFrequencies(terms: string[]): Map<string, number> {
+  const frequencies = new Map<string, number>()
+  for (const term of terms) frequencies.set(term, (frequencies.get(term) ?? 0) + 1)
+  return frequencies
+}
+
+function snippetAround(body: string, query: string, terms: string[], width: number): string {
+  const lower = body.toLowerCase()
+  const phraseAt = lower.indexOf(query.toLowerCase())
+  const termPositions = terms.map((term) => lower.indexOf(term)).filter((position) => position >= 0)
+  const at = phraseAt >= 0 ? phraseAt : termPositions.length > 0 ? Math.min(...termPositions) : -1
   if (at < 0) return body.slice(0, width)
   const lead = Math.floor(width / 3)
   const start = Math.max(0, at - lead)
   return (start > 0 ? "…" : "") + body.slice(start, start + width).replace(/\s+/g, " ").trim() + "…"
 }
 
-function countOccurrences(haystack: string, needle: string): number {
-  let count = 0
-  let at = haystack.indexOf(needle)
-  while (at >= 0) {
-    count++
-    at = haystack.indexOf(needle, at + needle.length)
+function bm25Scores(documents: SearchDocument[], queryTerms: string[]): Map<SearchDocument, number> {
+  const scores = new Map<SearchDocument, number>()
+  if (documents.length === 0) return scores
+
+  const averageLength = documents.reduce((sum, document) => sum + document.terms.length, 0) / documents.length
+  for (const term of new Set(queryTerms)) {
+    const documentFrequency = documents.reduce(
+      (count, document) => count + (document.frequencies.has(term) ? 1 : 0),
+      0,
+    )
+    if (documentFrequency === 0) continue
+
+    const inverseDocumentFrequency = Math.log(
+      1 + (documents.length - documentFrequency + 0.5) / (documentFrequency + 0.5),
+    )
+    for (const document of documents) {
+      const termFrequency = document.frequencies.get(term) ?? 0
+      if (termFrequency === 0) continue
+      const lengthNormalization = 1 - BM25_B + BM25_B * (document.terms.length / averageLength)
+      const termScore =
+        inverseDocumentFrequency *
+        ((termFrequency * (BM25_K1 + 1)) / (termFrequency + BM25_K1 * lengthNormalization))
+      scores.set(document, (scores.get(document) ?? 0) + termScore)
+    }
   }
-  return count
+  return scores
 }
 
 /**
@@ -61,8 +90,9 @@ function countOccurrences(haystack: string, needle: string): number {
  * unrelated work, which is worse than returning nothing.
  */
 export function search(db: Database, options: SearchOptions): Hit[] {
-  const needle = options.query.toLowerCase().trim()
-  if (needle.length === 0) return []
+  const query = options.query.trim()
+  const queryTerms = tokenize(query)
+  if (queryTerms.length === 0) return []
 
   const sessions = threadSessions(db, options.sessionID)
   const placeholders = sessions.map(() => "?").join(",")
@@ -71,8 +101,7 @@ export function search(db: Database, options: SearchOptions): Hit[] {
   let sql =
     `select session_id as sessionID, seq, type, time_created as createdAt, data ` +
     `from session_message ` +
-    `where session_id in (${placeholders}) and type in ('user','assistant') and lower(data) like ?`
-  params.push(`%${needle}%`)
+    `where session_id in (${placeholders}) and type in ('user','assistant')`
 
   if (options.beforeCheckpoint) {
     const checkpoint = latestCheckpoint(db, options.sessionID)
@@ -88,8 +117,7 @@ export function search(db: Database, options: SearchOptions): Hit[] {
     .query<{ sessionID: string; seq: number; type: string; createdAt: number; data: string }, any[]>(sql)
     .all(...params)
 
-  const now = Date.now()
-  const hits: Hit[] = []
+  const documents: SearchDocument[] = []
   for (const row of rows) {
     let parsed: unknown
     try {
@@ -99,22 +127,30 @@ export function search(db: Database, options: SearchOptions): Hit[] {
     }
     const body = messageText(row.type, parsed)
     if (body.length === 0) continue
-    const lower = body.toLowerCase()
-    // The LIKE ran against the raw JSON, so a match can live in metadata we
-    // never show. Only keep hits whose visible prose actually contains it.
-    if (!lower.includes(needle)) continue
-    hits.push({
+    const terms = tokenize(body)
+    documents.push({
       sessionID: row.sessionID,
       seq: row.seq,
       role: row.type,
       createdAt: row.createdAt,
-      occurrences: countOccurrences(lower, needle),
-      snippet: snippetAround(body, needle, options.snippetChars),
+      body,
+      terms,
+      frequencies: termFrequencies(terms),
     })
   }
 
-  hits.sort((a, b) => score(b, now) - score(a, now))
-  return hits.slice(0, options.limit)
+  const scores = bm25Scores(documents, queryTerms)
+  return [...scores]
+    .sort(([left, leftScore], [right, rightScore]) => rightScore - leftScore || right.createdAt - left.createdAt)
+    .slice(0, options.limit)
+    .map(([document]) => ({
+      sessionID: document.sessionID,
+      seq: document.seq,
+      role: document.role,
+      createdAt: document.createdAt,
+      occurrences: queryTerms.reduce((sum, term) => sum + (document.frequencies.get(term) ?? 0), 0),
+      snippet: snippetAround(document.body, query, queryTerms, options.snippetChars),
+    }))
 }
 
 /** Renders hits as text for the model, truncated to stay within the cap. */

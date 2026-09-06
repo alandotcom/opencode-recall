@@ -42,6 +42,16 @@ test("sibling subagent work is reachable", () => {
   expect(hits.map((h) => h.sessionID)).toContain("child-a")
 })
 
+test("query terms do not have to be a contiguous phrase", () => {
+  const hits = search(db, { ...options, sessionID: "root", query: "width keyed viewport" })
+  expect(hits.map((h) => [h.sessionID, h.seq])).toContainEqual(["child-a", 1])
+})
+
+test("BM25 ranks messages matching more query terms above partial matches", () => {
+  const hits = search(db, { ...options, sessionID: "root", query: "cache alignment" })
+  expect(hits[0]).toMatchObject({ sessionID: "root", seq: 2 })
+})
+
 test("before_checkpoint keeps only what fell out of context", () => {
   const before = search(db, { ...options, sessionID: "root", query: "alignment", beforeCheckpoint: true })
   const seqs = before.filter((h) => h.sessionID === "root").map((h) => h.seq)
