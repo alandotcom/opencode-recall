@@ -96,7 +96,6 @@ export default Plugin.define({
             limit: positiveInteger(input.limit, limitDefault),
             beforeCheckpoint: input.before_checkpoint === true,
             snippetChars,
-            maxChars,
           })
 
           const rendered = render(hits, maxChars)

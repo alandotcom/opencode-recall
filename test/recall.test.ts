@@ -19,7 +19,7 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-const options = { limit: 10, snippetChars: 200, maxChars: 4000, beforeCheckpoint: false }
+const options = { limit: 10, snippetChars: 200, beforeCheckpoint: false }
 
 test("a thread is the root plus every descendant", () => {
   expect(threadSessions(db, "child-a").sort()).toEqual(["child-a", "child-b", "root"])
@@ -55,6 +55,15 @@ test("singular query terms match plural message terms", () => {
 test("English word forms share a stem", () => {
   const hits = search(db, { ...options, sessionID: "root", query: "connection" })
   expect(hits.map((h) => [h.sessionID, h.seq])).toContainEqual(["child-b", 1])
+})
+
+test("a stem-only result shows the matching passage", () => {
+  const hits = search(db, { ...options, sessionID: "root", query: "connection" })
+  const stemmedHit = hits.find((hit) => hit.sessionID === "child-b")
+  expect(stemmedHit?.snippet).toContain("connected")
+  expect(stemmedHit?.snippet.length).toBeLessThanOrEqual(options.snippetChars)
+  expect(stemmedHit?.snippet).not.toContain("\u0001")
+  expect(stemmedHit?.snippet).not.toContain("\u0002")
 })
 
 test("exact terms rank above stem-only matches", () => {

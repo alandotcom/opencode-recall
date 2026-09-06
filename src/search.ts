@@ -8,7 +8,6 @@ export type SearchOptions = {
   limit: number
   beforeCheckpoint: boolean
   snippetChars: number
-  maxChars: number
 }
 
 export type Hit = {
@@ -16,7 +15,6 @@ export type Hit = {
   seq: number
   role: string
   createdAt: number
-  occurrences: number
   snippet: string
 }
 
@@ -32,22 +30,34 @@ function tokenize(input: string): string[] {
   return input.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []
 }
 
-function snippetAround(body: string, query: string, terms: string[], width: number): string {
-  const lower = body.toLowerCase()
-  const phraseAt = lower.indexOf(query.toLowerCase())
-  const termPositions = terms.map((term) => lower.indexOf(term)).filter((position) => position >= 0)
-  const at = phraseAt >= 0 ? phraseAt : termPositions.length > 0 ? Math.min(...termPositions) : -1
-  if (at < 0) return body.slice(0, width)
-  const lead = Math.floor(width / 3)
-  const start = Math.max(0, at - lead)
-  return (start > 0 ? "…" : "") + body.slice(start, start + width).replace(/\s+/g, " ").trim() + "…"
-}
-
 type RankedDocument = {
   document: SearchDocument
   exactScore: number
   stemmedScore: number
+  markedSnippet: string
   matchedTerms: Set<string>
+}
+
+const MATCH_START = "\u0001"
+const MATCH_END = "\u0002"
+
+function formatSnippet(markedSnippet: string, width: number): string {
+  if (width <= 0) return ""
+  const marked = markedSnippet.replace(/\s+/g, " ").trim()
+  const markerAt = marked.indexOf(MATCH_START)
+  const matchAt =
+    markerAt < 0
+      ? 0
+      : marked.slice(0, markerAt).replaceAll(MATCH_START, "").replaceAll(MATCH_END, "").length
+  const plain = marked.replaceAll(MATCH_START, "").replaceAll(MATCH_END, "")
+  if (plain.length <= width) return plain
+
+  const start = Math.max(0, matchAt - Math.floor(width / 3))
+  const hasPrefix = start > 0
+  const availableAfterPrefix = width - (hasPrefix ? 1 : 0)
+  const hasSuffix = availableAfterPrefix > 0 && start + availableAfterPrefix < plain.length
+  const contentWidth = availableAfterPrefix - (hasSuffix ? 1 : 0)
+  return `${hasPrefix ? "…" : ""}${plain.slice(start, start + contentWidth).trim()}${hasSuffix ? "…" : ""}`
 }
 
 function ftsQuery(terms: string[]): string {
@@ -73,20 +83,6 @@ function rankDocuments(documents: SearchDocument[], queryTerms: string[]): Ranke
       insertStemmed.run(rowID, document.body)
     })
 
-    const ranked = new Map<number, RankedDocument>()
-    const getRanked = (rowID: number): RankedDocument => {
-      const existing = ranked.get(rowID)
-      if (existing) return existing
-      const created = {
-        document: documents[rowID - 1]!,
-        exactScore: 0,
-        stemmedScore: 0,
-        matchedTerms: new Set<string>(),
-      }
-      ranked.set(rowID, created)
-      return created
-    }
-
     const query = ftsQuery([...new Set(queryTerms)])
     const exactScores = index
       .query<{ rowID: number; score: number }, [string]>(
@@ -94,23 +90,41 @@ function rankDocuments(documents: SearchDocument[], queryTerms: string[]): Ranke
       )
       .all(query)
     const stemmedScores = index
-      .query<{ rowID: number; score: number }, [string]>(
-        "select rowid as rowID, -bm25(stemmed_docs) as score from stemmed_docs where stemmed_docs match ?",
+      .query<{ rowID: number; score: number; markedSnippet: string }, [string]>(
+        `select rowid as rowID, -bm25(stemmed_docs) as score,
+                highlight(stemmed_docs, 0, char(1), char(2)) as markedSnippet
+         from stemmed_docs where stemmed_docs match ?`,
       )
       .all(query)
-    for (const row of exactScores) getRanked(row.rowID).exactScore = row.score
-    for (const row of stemmedScores) getRanked(row.rowID).stemmedScore = row.score
 
-    const exactMatches = index.query<{ rowID: number }, [string]>(
-      "select rowid as rowID from exact_docs where exact_docs match ?",
-    )
+    const ranked = new Map<number, RankedDocument>()
+    for (const row of stemmedScores) {
+      const document = documents[row.rowID - 1]
+      if (!document) throw new Error(`FTS returned unknown row ${row.rowID}`)
+      ranked.set(row.rowID, {
+        document,
+        exactScore: 0,
+        stemmedScore: row.score,
+        markedSnippet: row.markedSnippet,
+        matchedTerms: new Set<string>(),
+      })
+    }
+    for (const row of exactScores) {
+      const result = ranked.get(row.rowID)
+      if (!result) throw new Error(`Exact FTS result ${row.rowID} was absent from stemmed results`)
+      result.exactScore = row.score
+    }
+
     const stemmedMatches = index.query<{ rowID: number }, [string]>(
       "select rowid as rowID from stemmed_docs where stemmed_docs match ?",
     )
     for (const term of new Set(queryTerms)) {
       const termQuery = ftsQuery([term])
-      for (const row of exactMatches.all(termQuery)) getRanked(row.rowID).matchedTerms.add(term)
-      for (const row of stemmedMatches.all(termQuery)) getRanked(row.rowID).matchedTerms.add(term)
+      for (const row of stemmedMatches.all(termQuery)) {
+        const result = ranked.get(row.rowID)
+        if (!result) throw new Error(`FTS term result ${row.rowID} was absent from ranked results`)
+        result.matchedTerms.add(term)
+      }
     }
 
     return [...ranked.values()]
@@ -188,8 +202,7 @@ export function search(db: Database, options: SearchOptions): Hit[] {
       seq: ranked.document.seq,
       role: ranked.document.role,
       createdAt: ranked.document.createdAt,
-      occurrences: ranked.matchedTerms.size,
-      snippet: snippetAround(ranked.document.body, query, queryTerms, options.snippetChars),
+      snippet: formatSnippet(ranked.markedSnippet, options.snippetChars),
     }))
 }
 
