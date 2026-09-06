@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite"
+import { Database } from "bun:sqlite"
 import { latestCheckpoint, threadSessions } from "./scope.js"
 import { messageText } from "./text.js"
 
@@ -26,29 +26,10 @@ type SearchDocument = {
   role: string
   createdAt: number
   body: string
-  terms: string[]
-  frequencies: Map<string, number>
-}
-
-const BM25_K1 = 1.2
-const BM25_B = 0.75
-
-function normalizeTerm(term: string): string {
-  if (term.length <= 4) return term
-  if (term.endsWith("ies")) return term.slice(0, -3) + "y"
-  if (/(?:ches|shes|xes|zes|sses)$/.test(term)) return term.slice(0, -2)
-  if (term.endsWith("s") && !/(?:ss|us|is)$/.test(term)) return term.slice(0, -1)
-  return term
 }
 
 function tokenize(input: string): string[] {
-  return (input.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []).map(normalizeTerm)
-}
-
-function termFrequencies(terms: string[]): Map<string, number> {
-  const frequencies = new Map<string, number>()
-  for (const term of terms) frequencies.set(term, (frequencies.get(term) ?? 0) + 1)
-  return frequencies
+  return input.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []
 }
 
 function snippetAround(body: string, query: string, terms: string[], width: number): string {
@@ -62,32 +43,80 @@ function snippetAround(body: string, query: string, terms: string[], width: numb
   return (start > 0 ? "…" : "") + body.slice(start, start + width).replace(/\s+/g, " ").trim() + "…"
 }
 
-function bm25Scores(documents: SearchDocument[], queryTerms: string[]): Map<SearchDocument, number> {
-  const scores = new Map<SearchDocument, number>()
-  if (documents.length === 0) return scores
+type RankedDocument = {
+  document: SearchDocument
+  exactScore: number
+  stemmedScore: number
+  matchedTerms: Set<string>
+}
 
-  const averageLength = documents.reduce((sum, document) => sum + document.terms.length, 0) / documents.length
-  for (const term of new Set(queryTerms)) {
-    const documentFrequency = documents.reduce(
-      (count, document) => count + (document.frequencies.has(term) ? 1 : 0),
-      0,
-    )
-    if (documentFrequency === 0) continue
+function ftsQuery(terms: string[]): string {
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ")
+}
 
-    const inverseDocumentFrequency = Math.log(
-      1 + (documents.length - documentFrequency + 0.5) / (documentFrequency + 0.5),
+function rankDocuments(documents: SearchDocument[], queryTerms: string[]): RankedDocument[] {
+  if (documents.length === 0) return []
+
+  // Each call gets its own index. This keeps concurrent recalls independent
+  // and leaves opencode's database read-only.
+  const index = new Database(":memory:")
+  try {
+    index.run(`create virtual table exact_docs using fts5(body, tokenize = "unicode61 tokenchars '_'")`)
+    index.run(
+      `create virtual table stemmed_docs using fts5(body, tokenize = "porter unicode61 tokenchars '_'")`,
     )
-    for (const document of documents) {
-      const termFrequency = document.frequencies.get(term) ?? 0
-      if (termFrequency === 0) continue
-      const lengthNormalization = 1 - BM25_B + BM25_B * (document.terms.length / averageLength)
-      const termScore =
-        inverseDocumentFrequency *
-        ((termFrequency * (BM25_K1 + 1)) / (termFrequency + BM25_K1 * lengthNormalization))
-      scores.set(document, (scores.get(document) ?? 0) + termScore)
+    const insertExact = index.prepare("insert into exact_docs(rowid, body) values (?, ?)")
+    const insertStemmed = index.prepare("insert into stemmed_docs(rowid, body) values (?, ?)")
+    documents.forEach((document, position) => {
+      const rowID = position + 1
+      insertExact.run(rowID, document.body)
+      insertStemmed.run(rowID, document.body)
+    })
+
+    const ranked = new Map<number, RankedDocument>()
+    const getRanked = (rowID: number): RankedDocument => {
+      const existing = ranked.get(rowID)
+      if (existing) return existing
+      const created = {
+        document: documents[rowID - 1]!,
+        exactScore: 0,
+        stemmedScore: 0,
+        matchedTerms: new Set<string>(),
+      }
+      ranked.set(rowID, created)
+      return created
     }
+
+    const query = ftsQuery([...new Set(queryTerms)])
+    const exactScores = index
+      .query<{ rowID: number; score: number }, [string]>(
+        "select rowid as rowID, -bm25(exact_docs) as score from exact_docs where exact_docs match ?",
+      )
+      .all(query)
+    const stemmedScores = index
+      .query<{ rowID: number; score: number }, [string]>(
+        "select rowid as rowID, -bm25(stemmed_docs) as score from stemmed_docs where stemmed_docs match ?",
+      )
+      .all(query)
+    for (const row of exactScores) getRanked(row.rowID).exactScore = row.score
+    for (const row of stemmedScores) getRanked(row.rowID).stemmedScore = row.score
+
+    const exactMatches = index.query<{ rowID: number }, [string]>(
+      "select rowid as rowID from exact_docs where exact_docs match ?",
+    )
+    const stemmedMatches = index.query<{ rowID: number }, [string]>(
+      "select rowid as rowID from stemmed_docs where stemmed_docs match ?",
+    )
+    for (const term of new Set(queryTerms)) {
+      const termQuery = ftsQuery([term])
+      for (const row of exactMatches.all(termQuery)) getRanked(row.rowID).matchedTerms.add(term)
+      for (const row of stemmedMatches.all(termQuery)) getRanked(row.rowID).matchedTerms.add(term)
+    }
+
+    return [...ranked.values()]
+  } finally {
+    index.close()
   }
-  return scores
 }
 
 /**
@@ -135,29 +164,32 @@ export function search(db: Database, options: SearchOptions): Hit[] {
     }
     const body = messageText(row.type, parsed)
     if (body.length === 0) continue
-    const terms = tokenize(body)
     documents.push({
       sessionID: row.sessionID,
       seq: row.seq,
       role: row.type,
       createdAt: row.createdAt,
       body,
-      terms,
-      frequencies: termFrequencies(terms),
     })
   }
 
-  const scores = bm25Scores(documents, queryTerms)
-  return [...scores]
-    .sort(([left, leftScore], [right, rightScore]) => rightScore - leftScore || right.createdAt - left.createdAt)
+  const uniqueTermCount = new Set(queryTerms).size
+  return rankDocuments(documents, queryTerms)
+    .sort((left, right) => {
+      const score = (ranked: RankedDocument) => {
+        const coverage = ranked.matchedTerms.size / uniqueTermCount
+        return (2 * ranked.exactScore + ranked.stemmedScore) * coverage * coverage
+      }
+      return score(right) - score(left) || right.document.createdAt - left.document.createdAt
+    })
     .slice(0, options.limit)
-    .map(([document]) => ({
-      sessionID: document.sessionID,
-      seq: document.seq,
-      role: document.role,
-      createdAt: document.createdAt,
-      occurrences: queryTerms.reduce((sum, term) => sum + (document.frequencies.get(term) ?? 0), 0),
-      snippet: snippetAround(document.body, query, queryTerms, options.snippetChars),
+    .map((ranked) => ({
+      sessionID: ranked.document.sessionID,
+      seq: ranked.document.seq,
+      role: ranked.document.role,
+      createdAt: ranked.document.createdAt,
+      occurrences: ranked.matchedTerms.size,
+      snippet: snippetAround(ranked.document.body, query, queryTerms, options.snippetChars),
     }))
 }
 

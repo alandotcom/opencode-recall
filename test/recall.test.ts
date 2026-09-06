@@ -52,6 +52,16 @@ test("singular query terms match plural message terms", () => {
   expect(hits.map((h) => [h.sessionID, h.seq])).toContainEqual(["child-b", 1])
 })
 
+test("English word forms share a stem", () => {
+  const hits = search(db, { ...options, sessionID: "root", query: "connection" })
+  expect(hits.map((h) => [h.sessionID, h.seq])).toContainEqual(["child-b", 1])
+})
+
+test("exact terms rank above stem-only matches", () => {
+  const hits = search(db, { ...options, sessionID: "root", query: "connection" })
+  expect(hits[0]).toMatchObject({ sessionID: "root", seq: 5 })
+})
+
 test("BM25 ranks messages matching more query terms above partial matches", () => {
   const hits = search(db, { ...options, sessionID: "root", query: "cache alignment" })
   expect(hits[0]).toMatchObject({ sessionID: "root", seq: 2 })

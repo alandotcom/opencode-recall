@@ -16,9 +16,10 @@ group.
 `recall` never searches another thread. If nothing matches, it reports that nothing matched. An
 answer taken from unrelated work is worse than no answer.
 
-Search uses BM25 term relevance. Query terms do not need to be next to each other or in the same
-order. Common English singular and plural forms, such as `plugin` and `plugins`, share a search
-term. A short description with distinctive words or identifiers works best.
+Search uses SQLite FTS5 BM25 over exact Unicode tokens and Porter-stemmed English terms. Exact
+tokens receive more weight, which keeps code identifiers precise, while stemming lets forms such as
+`connect`, `connected`, and `connection` match. Query terms do not need to be next to each other or
+in the same order. A short description with distinctive words or identifiers works best.
 
 ## If you want to search every thread
 
