@@ -53,7 +53,7 @@ export function buildFixture(path: string): Database {
   )
   add("root", 4, "assistant", "Continuing after compaction, alignment still needs a regression test.", now - 60_000)
   add("child-a", 1, "assistant", "Subagent found the flexbox cache is keyed on viewport width.", now - 50_000)
-  add("child-b", 1, "assistant", "Unrelated subagent note about logging.", now - 40_000)
+  add("child-b", 1, "assistant", "Unrelated subagents note about logging.", now - 40_000)
   add("stranger", 1, "assistant", "A different thread also discussed flexbox alignment at length.", now - 30_000)
   add("stranger-child", 1, "assistant", "More flexbox talk from the other thread.", now - 20_000)
 

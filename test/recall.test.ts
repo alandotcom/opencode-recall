@@ -47,6 +47,11 @@ test("query terms do not have to be a contiguous phrase", () => {
   expect(hits.map((h) => [h.sessionID, h.seq])).toContainEqual(["child-a", 1])
 })
 
+test("singular query terms match plural message terms", () => {
+  const hits = search(db, { ...options, sessionID: "root", query: "subagent" })
+  expect(hits.map((h) => [h.sessionID, h.seq])).toContainEqual(["child-b", 1])
+})
+
 test("BM25 ranks messages matching more query terms above partial matches", () => {
   const hits = search(db, { ...options, sessionID: "root", query: "cache alignment" })
   expect(hits[0]).toMatchObject({ sessionID: "root", seq: 2 })

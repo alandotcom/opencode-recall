@@ -33,8 +33,16 @@ type SearchDocument = {
 const BM25_K1 = 1.2
 const BM25_B = 0.75
 
+function normalizeTerm(term: string): string {
+  if (term.length <= 4) return term
+  if (term.endsWith("ies")) return term.slice(0, -3) + "y"
+  if (/(?:ches|shes|xes|zes|sses)$/.test(term)) return term.slice(0, -2)
+  if (term.endsWith("s") && !/(?:ss|us|is)$/.test(term)) return term.slice(0, -1)
+  return term
+}
+
 function tokenize(input: string): string[] {
-  return input.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []
+  return (input.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []).map(normalizeTerm)
 }
 
 function termFrequencies(terms: string[]): Map<string, number> {
