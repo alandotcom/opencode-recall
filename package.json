@@ -9,6 +9,7 @@
     "./server": "./src/index.ts"
   },
   "files": [
+    "index.ts",
     "src",
     "README.md"
   ],
@@ -17,7 +18,7 @@
     "opencode-plugin"
   ],
   "dependencies": {
-    "@opencode-ai/plugin": "beta"
+    "@opencode/plugin": "2.0.28"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -1,4 +1,4 @@
-import { Plugin } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
 import type { Database } from "bun:sqlite"
 import { openDatabase, resolveDatabasePath } from "./db.js"
 import { render, search } from "./search.js"
